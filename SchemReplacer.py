@@ -1,8 +1,7 @@
 import os
 import nbtlib
 import tkinter as tk
-from tkinter import filedialog, messagebox
-
+from tkinter import filedialog, messagebox, ttk
 
 class ToolTip:
     def __init__(self, widget, text):
@@ -27,7 +26,6 @@ class ToolTip:
             self.tooltip.destroy()
             self.tooltip = None
 
-
 def load_schem_files(schem_files):
     schem_data_dict = {}
 
@@ -37,7 +35,6 @@ def load_schem_files(schem_files):
 
     return schem_data_dict
 
-
 def replace_blocks(schem_data, block_to_replace, replace_with):
     replaced_blocks = 0
     if not schem_data:
@@ -46,7 +43,7 @@ def replace_blocks(schem_data, block_to_replace, replace_with):
     if 'Palette' in schem_data:
         palette = schem_data['Palette']
 
-        if "[" not in block_to_replace and "[" in replace_with and any(replace_with.split("[")[0] + "[" in item for item in palette):
+        if "[" not in block_to_replace and "[" in replace_with and any(replace_with.split("[")[0]+"[" in item for item in palette):
             return "Please remove the properties of the replacement block (everything in brackets) to prevent conflicts."
 
         if block_to_replace == replace_with:
@@ -64,7 +61,7 @@ def replace_blocks(schem_data, block_to_replace, replace_with):
                     found = True
                     break
 
-        if not found:
+        if found == False:
             return f"No matching blocks found for: {block_to_replace}"
 
         changes = []
@@ -95,14 +92,17 @@ def replace_blocks(schem_data, block_to_replace, replace_with):
             else:
                 palette[new_key] = palette.pop(old_key)
 
+            # Remove the original block from palette after replacing, then re-index both the Palette and Blockdata to prevent errors when file is read
             if old_key in palette:
                 old_index = palette[old_key]
                 del palette[old_key]
 
+                # Decrement the indices of all blocks in the palette that come after the removed block.
                 for block, index in palette.items():
                     if index > old_index:
                         palette[block] = nbtlib.Int(index - 1)
 
+                # Decrement the indices in the 'BlockData' ByteArray that correspond to these blocks.
                 block_data = schem_data['BlockData']
                 block_data_bytes = bytearray(block_data)
                 for i, block in enumerate(block_data_bytes):
@@ -116,13 +116,11 @@ def replace_blocks(schem_data, block_to_replace, replace_with):
 
         return f"Replaced {replaced_blocks} blocks"
 
-
 def save_schem_file(schem_data, filepath):
     try:
         schem_data.save(filepath)
     except Exception as e:
         return f"Error saving file: {e}"
-
 
 def get_unique_blocks_from_modified_data(modified_schem_data):
     unique_blocks = set()
@@ -135,10 +133,8 @@ def get_unique_blocks_from_modified_data(modified_schem_data):
 
     return unique_blocks
 
-
 unsaved_changes = False
 
-# GUI
 def main():
     def show_message(title, message, buttons=False):
         def close_dialog(result=None):
@@ -247,152 +243,183 @@ def main():
     def update_master_list(modified_schem_data):
         nonlocal unique_blocks
         unique_blocks = sorted(list(get_unique_blocks_from_modified_data(modified_schem_data)), key=lambda x: x.split(':', 1)[1])
+        sort_master_list()
+
+    def sort_master_list():
+        sort_by_mod = combo_sort_by_mod.get()
+
+        if sort_by_mod:
+            reverse = sort_by_mod == "Z-A"
+            unique_blocks.sort(key=lambda x: x.split(':', 1)[0], reverse=reverse)
+
         listbox_master_list.delete(0, tk.END)
         for block in unique_blocks:
             listbox_master_list.insert(tk.END, block)
 
-        num_files = len(modified_schem_data)
-        if num_files == 1:
-            master_list_label_text.set("1 schematic file loaded")
-        else:
-            master_list_label_text.set(f"{num_files} schematic files loaded")
+    def on_search_blocks():
+        search_term = entry_search_block.get().strip().lower()
+        listbox_search_results.delete(0, tk.END)
+        found_count = 0
+        for idx, block in enumerate(unique_blocks):
+            if search_term in block.lower():
+                listbox_search_results.insert(tk.END, block)
+                found_count += 1
+        label_found_count.config(text=f"Найдено: {found_count}")
+
+    def on_select_search_result(event):
+        selected_block = listbox_search_results.get(listbox_search_results.curselection())
+        listbox_master_list.selection_clear(0, tk.END)
+        for idx, block in enumerate(unique_blocks):
+            if block == selected_block:
+                listbox_master_list.selection_set(idx)
+                listbox_master_list.see(idx)
+                break
 
     def on_save_changes():
-        if unsaved_changes:
-            for filepath, schem_data in modified_schem_data.items():
-                save_schem_file(schem_data, filepath)
-            unsaved_changes = False
-            root.title(".Schem Block Replacer")
-            messagebox.showinfo("Save Changes", "Changes saved successfully.")
-        else:
-            messagebox.showinfo("Save Changes", "No unsaved changes to save.")
+        for filepath, schem_data in modified_schem_data.items():
+            save_schem_file(schem_data, filepath)
+
+        global unsaved_changes
+        unsaved_changes = False
+        root.title(".Schem Block Replacer")
+        messagebox.showinfo("Save Changes", "Changes saved successfully!")
 
     def on_save_copy():
-        if modified_schem_data:
-            destination = filedialog.asksaveasfilename(defaultextension=".schem",
-                                                       filetypes=[("Schem Files", "*.schem")])
-            if destination:
-                for filepath, schem_data in modified_schem_data.items():
-                    save_schem_file(schem_data, destination)
-                unsaved_changes = False
-                root.title(".Schem Block Replacer")
-                messagebox.showinfo("Save Copy", "Copy saved successfully.")
-        else:
-            messagebox.showinfo("Save Copy", "No schematic file loaded to save.")
+        directory = filedialog.askdirectory(title="Select Directory to Save Copy")
+        if not directory:
+            return
 
-    def on_search():
-        search_query = entry_search.get().lower()
-        search_results = [block for block in unique_blocks if search_query in block.lower()]
-        listbox_search_results.delete(0, tk.END)
-        for result in search_results:
-            listbox_search_results.insert(tk.END, result)
-        search_results_label_text.set(f"{len(search_results)} results found")
-        highlight_search_results(search_results)
+        for filepath, schem_data in modified_schem_data.items():
+            filename = os.path.basename(filepath)
+            save_path = os.path.join(directory, filename)
+            save_schem_file(schem_data, save_path)
 
-    def highlight_search_results(results):
-        listbox_master_list.selection_clear(0, tk.END)
-        for result in results:
-            idx = unique_blocks.index(result)
-            listbox_master_list.selection_set(idx)
-            listbox_master_list.see(idx)
+        messagebox.showinfo("Save Copy", "Copies saved successfully!")
+
+    def on_delete_selected():
+        selected_idx = listbox_master_list.curselection()
+        if not selected_idx:
+            messagebox.showwarning("Delete Block", "Please select a block to delete.")
+            return
+        selected_block = listbox_master_list.get(selected_idx)
+        unique_blocks.remove(selected_block)
+        listbox_master_list.delete(selected_idx)
+        for filepath, schem_data in modified_schem_data.items():
+            palette = schem_data.get('Palette', {})
+            if selected_block in palette:
+                del palette[selected_block]
+                schem_data['Palette'] = palette
+
+        update_master_list(modified_schem_data)
+        global unsaved_changes
+        unsaved_changes = True
+        root.title(".Schem Block Replacer (Unsaved Changes)")
 
     root = tk.Tk()
     root.title(".Schem Block Replacer")
+    root.geometry("1000x600")
 
     frame_top = tk.Frame(root)
-    frame_top.pack(fill=tk.X, padx=10, pady=10)
+    frame_top.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
 
-    label_replace_block = tk.Label(frame_top, text="Replace Block:")
+    button_open_files = tk.Button(frame_top, text="Open .schem Files", command=on_open_files)
+    button_open_files.pack(side=tk.LEFT)
+
+    button_save_changes = tk.Button(frame_top, text="Save Changes", command=on_save_changes, state=tk.DISABLED)
+    button_save_changes.pack(side=tk.LEFT, padx=5)
+
+    button_save_copy = tk.Button(frame_top, text="Save Copy", command=on_save_copy, state=tk.DISABLED)
+    button_save_copy.pack(side=tk.LEFT, padx=5)
+
+    frame_replace = tk.Frame(root)
+    frame_replace.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+
+    label_replace_block = tk.Label(frame_replace, text="Block to Replace:")
     label_replace_block.pack(side=tk.LEFT)
 
-    entry_replace_block = tk.Entry(frame_top)
+    entry_replace_block = tk.Entry(frame_replace, width=30, state=tk.DISABLED)
     entry_replace_block.pack(side=tk.LEFT, padx=5)
     entry_replace_block.bind("<FocusIn>", on_entry_click)
 
-    label_replace_with = tk.Label(frame_top, text="With:")
+    label_replace_with = tk.Label(frame_replace, text="Replace With:")
     label_replace_with.pack(side=tk.LEFT)
 
-    entry_replace_with = tk.Entry(frame_top)
+    entry_replace_with = tk.Entry(frame_replace, width=30, state=tk.DISABLED)
     entry_replace_with.pack(side=tk.LEFT, padx=5)
     entry_replace_with.bind("<FocusIn>", on_entry_click)
 
-    button_replace_blocks = tk.Button(frame_top, text="Replace Blocks", command=on_replace_blocks)
+    button_replace_blocks = tk.Button(frame_replace, text="Replace Blocks", command=on_replace_blocks, state=tk.DISABLED)
     button_replace_blocks.pack(side=tk.LEFT, padx=5)
 
-    frame_middle = tk.Frame(root)
-    frame_middle.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    frame_search = tk.Frame(root)
+    frame_search.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
 
-    frame_master_list = tk.Frame(frame_middle)
-    frame_master_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    label_search_block = tk.Label(frame_search, text="Search Block:")
+    label_search_block.pack(side=tk.LEFT)
 
-    master_list_label_text = tk.StringVar()
-    master_list_label = tk.Label(frame_master_list, textvariable=master_list_label_text)
-    master_list_label.pack()
+    entry_search_block = tk.Entry(frame_search, width=30)
+    entry_search_block.pack(side=tk.LEFT, padx=5)
 
-    scrollbar_master_list_y = tk.Scrollbar(frame_master_list)
-    scrollbar_master_list_y.pack(side=tk.RIGHT, fill=tk.Y)
+    button_search_blocks = tk.Button(frame_search, text="Search", command=on_search_blocks)
+    button_search_blocks.pack(side=tk.LEFT, padx=5)
 
-    listbox_master_list = tk.Listbox(
-        frame_master_list,
-        yscrollcommand=scrollbar_master_list_y.set,
-        selectmode=tk.SINGLE
-    )
+    label_found_count = tk.Label(frame_search, text="Найдено: 0")
+    label_found_count.pack(side=tk.LEFT, padx=5)
+
+    frame_sort = tk.Frame(root)
+    frame_sort.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+
+    label_sort_by_mod = tk.Label(frame_sort, text="Sort by Mod:")
+    label_sort_by_mod.pack(side=tk.LEFT)
+
+    combo_sort_by_mod = ttk.Combobox(frame_sort, values=["", "A-Z", "Z-A"])
+    combo_sort_by_mod.pack(side=tk.LEFT, padx=5)
+    combo_sort_by_mod.bind("<<ComboboxSelected>>", lambda e: sort_master_list())
+
+    frame_lists = tk.Frame(root)
+    frame_lists.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+    frame_master_list = tk.Frame(frame_lists)
+    frame_master_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+    label_master_list = tk.Label(frame_master_list, text="Master List")
+    label_master_list.pack(side=tk.TOP)
+
+    listbox_master_list = tk.Listbox(frame_master_list, selectmode=tk.SINGLE)
     listbox_master_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    scrollbar_master_list = tk.Scrollbar(frame_master_list)
+    scrollbar_master_list.pack(side=tk.RIGHT, fill=tk.Y)
+    listbox_master_list.config(yscrollcommand=scrollbar_master_list.set)
+    scrollbar_master_list.config(command=listbox_master_list.yview)
+
     listbox_master_list.bind('<<ListboxSelect>>', on_listbox_select)
 
-    scrollbar_master_list_y.config(command=listbox_master_list.yview)
+    frame_search_results = tk.Frame(frame_lists)
+    frame_search_results.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-    frame_search = tk.Frame(root)
-    frame_search.pack(fill=tk.X, padx=10, pady=10)
+    label_search_results = tk.Label(frame_search_results, text="Search Results")
+    label_search_results.pack(side=tk.TOP)
 
-    label_search = tk.Label(frame_search, text="Search:")
-    label_search.pack(side=tk.LEFT)
-
-    entry_search = tk.Entry(frame_search)
-    entry_search.pack(side=tk.LEFT, padx=5)
-
-    button_search = tk.Button(frame_search, text="Search", command=on_search)
-    button_search.pack(side=tk.LEFT, padx=5)
-
-    search_results_label_text = tk.StringVar()
-    search_results_label = tk.Label(frame_search, textvariable=search_results_label_text)
-    search_results_label.pack(side=tk.LEFT, padx=5)
-
-    frame_search_results = tk.Frame(root)
-    frame_search_results.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-    scrollbar_search_results_y = tk.Scrollbar(frame_search_results)
-    scrollbar_search_results_y.pack(side=tk.RIGHT, fill=tk.Y)
-
-    listbox_search_results = tk.Listbox(
-        frame_search_results,
-        yscrollcommand=scrollbar_search_results_y.set,
-        selectmode=tk.SINGLE
-    )
+    listbox_search_results = tk.Listbox(frame_search_results, selectmode=tk.SINGLE)
     listbox_search_results.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-    scrollbar_search_results_y.config(command=listbox_search_results.yview)
+    scrollbar_search_results = tk.Scrollbar(frame_search_results)
+    scrollbar_search_results.pack(side=tk.RIGHT, fill=tk.Y)
+    listbox_search_results.config(yscrollcommand=scrollbar_search_results.set)
+    scrollbar_search_results.config(command=listbox_search_results.yview)
 
-    frame_bottom = tk.Frame(root)
-    frame_bottom.pack(fill=tk.X, padx=10, pady=10)
+    listbox_search_results.bind('<<ListboxSelect>>', on_select_search_result)
 
-    button_open_files = tk.Button(frame_bottom, text="Open .schem Files", command=on_open_files)
-    button_open_files.pack(side=tk.LEFT, padx=5)
+    button_delete_selected = tk.Button(root, text="Удалить выбранный блок", command=on_delete_selected)
+    button_delete_selected.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
 
-    button_save_changes = tk.Button(frame_bottom, text="Save Changes", command=on_save_changes)
-    button_save_changes.pack(side=tk.LEFT, padx=5)
-
-    button_save_copy = tk.Button(frame_bottom, text="Save Copy As...", command=on_save_copy)
-    button_save_copy.pack(side=tk.LEFT, padx=5)
-
-    set_input_widgets_state(tk.DISABLED)
     last_selected_entry = None
-    unique_blocks = []
     new_schem_files = []
     modified_schem_data = {}
+    unique_blocks = []
 
     root.mainloop()
-
 
 if __name__ == "__main__":
     main()
